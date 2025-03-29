@@ -9,11 +9,9 @@ class VirtualIPLoadBalancer(object):
     def __init__(self, connection):
         self.connection = connection
         
-        # Virtual IP and MAC for load balancing
         self.virtual_ip = IPAddr("10.0.0.10")
         self.virtual_mac = EthAddr("00:00:00:00:00:10")
         
-        # Server pool with IP and MAC
         self.server_pool = [
             (IPAddr("10.0.0.5"), EthAddr("00:00:00:00:00:05")),
             (IPAddr("10.0.0.6"), EthAddr("00:00:00:00:00:06"))
@@ -105,13 +103,13 @@ class VirtualIPLoadBalancer(object):
             po.actions = fm.actions
             self.connection.send(po)
 
-    def get_port_for_ip(self, ip):
-        if ip == IPAddr("10.0.0.5"):
-            return 1
-        elif ip == IPAddr("10.0.0.6"):
-            return 2
-        else:
-            return of.OFPP_FLOOD
+def get_port_for_ip(self, ip):
+    if ip == IPAddr("10.0.0.5"):
+        return 5  # h5 is on port s1-eth5
+    elif ip == IPAddr("10.0.0.6"):
+        return 6  # h6 is on port s1-eth6
+    else:
+        return of.OFPP_FLOOD
 
 def launch():
     def start_switch(event):
