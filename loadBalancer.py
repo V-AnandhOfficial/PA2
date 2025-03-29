@@ -16,7 +16,7 @@ class VirtualIPLoadBalancer(object):
         self.server_ips = [IPAddr("10.0.0.5"), IPAddr("10.0.0.6")]
         self.server_macs = [EthAddr("00:00:00:00:00:05"),
                             EthAddr("00:00:00:00:00:06")]
-        # Round-robin pointer.
+        # Round-robin pointer for virtual IP traffic.
         self.next_server = 0
         # ARP table: maps IPAddr -> (EthAddr, port)
         self.arp_table = {}
@@ -38,11 +38,10 @@ class VirtualIPLoadBalancer(object):
         inport = event.port
         self._update_arp_table(packet, inport)
 
-        # Process ARP packets as before.
         if packet.type == ethernet.ARP_TYPE:
             arp_pkt = packet.next
             if arp_pkt.opcode == arp.REQUEST:
-                # Handle ARP requests for the virtual IP.
+                # ARP: if request is for the virtual IP, use load balancing.
                 if arp_pkt.protodst == self.virtual_ip:
                     client_ip = arp_pkt.protosrc
                     if client_ip in self.client_server_map:
@@ -53,8 +52,9 @@ class VirtualIPLoadBalancer(object):
                         self.client_server_map[client_ip] = (server_ip, server_mac)
                         log.info("Assigning client %s to server %s", client_ip, server_ip)
                     self._send_arp_reply(event, arp_pkt, server_mac, inport)
-                    self._install_flow_rules(client_ip, packet.src, server_ip, server_mac, inport)
+                    self._install_virtual_flow_rules(client_ip, packet.src, server_ip, server_mac, inport)
                 else:
+                    # For ARP requests not for the virtual IP, respond if we have an entry.
                     if arp_pkt.protodst in self.arp_table:
                         dst_mac, _ = self.arp_table[arp_pkt.protodst]
                         self._send_arp_reply(event, arp_pkt, dst_mac, inport,
@@ -63,10 +63,9 @@ class VirtualIPLoadBalancer(object):
                         self._flood(event)
             return
 
-        # Process IP packets destined to the virtual IP.
         elif packet.type == ethernet.IP_TYPE:
             ip_pkt = packet.next
-            # Check if the packet is intended for the virtual IP.
+            # Case 1: Client sends IP packet to virtual IP.
             if ip_pkt.dstip == self.virtual_ip:
                 client_ip = ip_pkt.srcip
                 if client_ip in self.client_server_map:
@@ -75,25 +74,38 @@ class VirtualIPLoadBalancer(object):
                 else:
                     server_ip, server_mac = self._pick_server()
                     self.client_server_map[client_ip] = (server_ip, server_mac)
-                    log.info("Assigning client %s to server %s (via IP packet)", client_ip, server_ip)
-                    # Install flow rules for subsequent packets.
-                    self._install_flow_rules(client_ip, packet.src, server_ip, server_mac, inport)
+                    log.info("Assigning client %s to server %s (via virtual IP)", client_ip, server_ip)
+                    self._install_virtual_flow_rules(client_ip, packet.src, server_ip, server_mac, inport)
                 
-                # Determine server port based on the server's IP.
+                # Forward packet: rewrite destination IP/MAC.
                 server_port = 5 if str(server_ip) == "10.0.0.5" else 6
-
-                # Issue a packet_out to immediately handle this IP packet.
                 msg = of.ofp_packet_out()
                 msg.data = event.ofp.data
-                # Rewrite destination IP and MAC.
                 msg.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
                 msg.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
                 msg.actions.append(of.ofp_action_output(port=server_port))
                 self.connection.send(msg)
-                log.info("Redirected IP packet from client %s to server %s", client_ip, server_ip)
+                log.info("Redirected IP packet from client %s (virtual IP) to server %s", client_ip, server_ip)
+            # Case 2: Client sends IP packet directly to a real server IP.
+            elif ip_pkt.dstip in self.server_ips:
+                client_ip = ip_pkt.srcip
+                assigned_server_ip = ip_pkt.dstip
+                idx = self.server_ips.index(assigned_server_ip)
+                assigned_server_mac = self.server_macs[idx]
+                # Store mapping if not already.
+                if client_ip not in self.client_server_map:
+                    self.client_server_map[client_ip] = (assigned_server_ip, assigned_server_mac)
+                    log.info("Direct assignment: Client %s assigned to server %s", client_ip, assigned_server_ip)
+                self._install_direct_flow_rules(client_ip, packet.src, assigned_server_ip, assigned_server_mac, inport)
+                # Forward the packet as-is.
+                server_port = 5 if str(assigned_server_ip) == "10.0.0.5" else 6
+                msg = of.ofp_packet_out()
+                msg.data = event.ofp.data
+                msg.actions.append(of.ofp_action_output(port=server_port))
+                self.connection.send(msg)
+                log.info("Redirected direct IP packet from client %s to server %s", client_ip, assigned_server_ip)
             else:
-                # For non-virtual IP packets, fallback to flooding.
-                log.info("Received IP packet not destined for virtual IP; flooding")
+                log.info("Received IP packet not destined for virtual IP or known server; flooding")
                 self._flood(event)
             return
 
@@ -127,34 +139,59 @@ class VirtualIPLoadBalancer(object):
         msg.data = e.pack()
         msg.actions.append(of.ofp_action_output(port=outport))
         self.connection.send(msg)
-        log.info("Sent ARP reply: %s is-at %s (to port %s)",
-                 r.protosrc, reply_mac, outport)
+        log.info("Sent ARP reply: %s is-at %s (to port %s)", r.protosrc, reply_mac, outport)
 
-    def _install_flow_rules(self, client_ip, client_mac, server_ip, server_mac, client_port):
-        # Determine the server's port (h5 on port 5, h6 on port 6).
+    def _install_virtual_flow_rules(self, client_ip, client_mac, server_ip, server_mac, client_port):
+        """Install flows for traffic arriving destined to the virtual IP.
+           These flows rewrite the destination (client→server) and the source (server→client)."""
         server_port = 5 if str(server_ip) == "10.0.0.5" else 6
 
-        # Flow rule for Client -> Server.
+        # Client -> Server: match on virtual IP and rewrite to the chosen server.
         fm_c2s = of.ofp_flow_mod()
         fm_c2s.match.in_port = client_port
-        fm_c2s.match.dl_type = 0x0800  # IP packets.
+        fm_c2s.match.dl_type = 0x0800
         fm_c2s.match.nw_dst = self.virtual_ip
         fm_c2s.actions.append(of.ofp_action_nw_addr.set_dst(server_ip))
         fm_c2s.actions.append(of.ofp_action_dl_addr.set_dst(server_mac))
         fm_c2s.actions.append(of.ofp_action_output(port=server_port))
         self.connection.send(fm_c2s)
-        log.info("Installed flow: Client %s -> Server %s", client_ip, server_ip)
+        log.info("Installed virtual flow: Client %s -> Server %s", client_ip, server_ip)
 
-        # Flow rule for Server -> Client.
+        # Server -> Client: match on the server's IP and rewrite the source to the virtual IP.
         fm_s2c = of.ofp_flow_mod()
         fm_s2c.match.in_port = server_port
-        fm_s2c.match.dl_type = 0x0800  # IP packets.
+        fm_s2c.match.dl_type = 0x0800
         fm_s2c.match.nw_src = server_ip
         fm_s2c.match.nw_dst = client_ip
         fm_s2c.actions.append(of.ofp_action_nw_addr.set_src(self.virtual_ip))
         fm_s2c.actions.append(of.ofp_action_output(port=client_port))
         self.connection.send(fm_s2c)
-        log.info("Installed flow: Server %s -> Client %s", server_ip, client_ip)
+        log.info("Installed virtual flow: Server %s -> Client %s", server_ip, client_ip)
+
+    def _install_direct_flow_rules(self, client_ip, client_mac, server_ip, server_mac, client_port):
+        """Install flows for direct pings (client sends to a real server IP).
+           In this case no rewriting is done on the forward path; packets are simply forwarded.
+           The reverse flow simply forwards the packet back."""
+        server_port = 5 if str(server_ip) == "10.0.0.5" else 6
+
+        # Client -> Server: match on the actual server IP.
+        fm_c2s = of.ofp_flow_mod()
+        fm_c2s.match.in_port = client_port
+        fm_c2s.match.dl_type = 0x0800
+        fm_c2s.match.nw_dst = server_ip
+        fm_c2s.actions.append(of.ofp_action_output(port=server_port))
+        self.connection.send(fm_c2s)
+        log.info("Installed direct flow: Client %s -> Server %s", client_ip, server_ip)
+
+        # Server -> Client: forward without rewriting.
+        fm_s2c = of.ofp_flow_mod()
+        fm_s2c.match.in_port = server_port
+        fm_s2c.match.dl_type = 0x0800
+        fm_s2c.match.nw_src = server_ip
+        fm_s2c.match.nw_dst = client_ip
+        fm_s2c.actions.append(of.ofp_action_output(port=client_port))
+        self.connection.send(fm_s2c)
+        log.info("Installed direct flow: Server %s -> Client %s", server_ip, client_ip)
 
     def _flood(self, event):
         msg = of.ofp_packet_out()
