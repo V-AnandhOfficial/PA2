@@ -11,15 +11,10 @@ VIRTUAL_IP = IPAddr("10.0.0.10")  # Virtual IP address
 SERVER_IPS = [IPAddr("10.0.0.5"), IPAddr("10.0.0.6")]  # Real server IP addresses
 SERVER_MACS = [EthAddr("00:00:00:00:00:05"), EthAddr("00:00:00:00:00:06")]  # Server MAC addresses
 
+ # A virtual IP load balancing switch implementation using POX.
 class VirtualIPLoadBalancer(object):
-    """
-    A virtual IP load balancing switch implementation using POX.
-    """
-    
+    # Initialize the load balancer
     def __init__(self, connection):
-        """
-        Initialize the load balancer
-        """
         self.connection = connection
         connection.addListeners(self)
         
@@ -34,10 +29,8 @@ class VirtualIPLoadBalancer(object):
         
         log.info("Virtual IP Load Balancer initialized")
     
+    # Handle packet in messages from the switch
     def _handle_PacketIn(self, event):
-        """
-        Handle packet in messages from the switch
-        """
         packet = event.parsed
         
         if not packet.parsed:
@@ -63,10 +56,8 @@ class VirtualIPLoadBalancer(object):
         # For other packet types, use normal L2 learning switch behavior
         self._handle_other(event, packet, in_port)
     
+    # Handle ARP packets
     def _handle_arp(self, event, packet, in_port):
-        """
-        Handle ARP packets
-        """
         arp_packet = packet.payload
         
         # Handle ARP requests for the virtual IP
@@ -120,10 +111,8 @@ class VirtualIPLoadBalancer(object):
         # For other ARP packets, use normal L2 behavior
         self._handle_other(event, packet, in_port)
     
+    # Handle IP packets
     def _handle_ip(self, event, packet, in_port):
-        """
-        Handle IP packets
-        """
         ip_packet = packet.payload
         
         # Check if this is traffic to/from our virtual IP or servers
@@ -157,8 +146,7 @@ class VirtualIPLoadBalancer(object):
             return
             
         elif any(ip_packet.srcip == server_ip for server_ip in SERVER_IPS):
-            # Server -> Client traffic
-            # Check if this server is responding to a client that was using virtual IP
+            # Server directs Client traffic and Checks if this server is responding to a client that was using virtual IP
             server_idx = SERVER_IPS.index(ip_packet.srcip)
             
             # Find client that this server is responding to
@@ -192,10 +180,8 @@ class VirtualIPLoadBalancer(object):
         # For other IP packets, use normal L2 behavior
         self._handle_other(event, packet, in_port)
     
+    # Handle other packet types with basic L2 switching behavior
     def _handle_other(self, event, packet, in_port):
-        """
-        Handle other packet types with basic L2 switching behavior
-        """
         # Basic L2 learning switch
         if packet.dst not in self.mac_to_port:
             # Flood to all ports except the input port
@@ -215,19 +201,15 @@ class VirtualIPLoadBalancer(object):
             msg.in_port = event.port
             self.connection.send(msg)
     
+    # Get the next server index using round-robin algorithm
     def _get_next_server(self, client_mac):
-        """
-        Get the next server index using round-robin algorithm
-        """
         server_idx = self.current_server
         self.current_server = (self.current_server + 1) % len(SERVER_IPS)
         log.info("Assigning server %s to client %s", server_idx, client_mac)
         return server_idx
     
+    # Get the server index assigned to a specific client
     def _get_server_for_client(self, client_ip):
-        """
-        Get the server index assigned to a specific client
-        """
         if client_ip not in self.client_to_server:
             # Assign a new server for this client
             server_idx = self._get_next_server(client_ip)
@@ -235,10 +217,9 @@ class VirtualIPLoadBalancer(object):
         
         return self.client_to_server[client_ip]
     
+    # Set up OpenFlow entries for both client->server and server->client traffic
     def _setup_flow_entries(self, client_ip, server_ip, server_idx, client_port):
-        """
-        Set up OpenFlow entries for both client->server and server->client traffic
-        """
+
         # Get the port for the server
         server_mac = SERVER_MACS[server_idx]
         server_port = self.mac_to_port.get(server_mac)
@@ -275,11 +256,8 @@ class VirtualIPLoadBalancer(object):
         msg.idle_timeout = 300  # 5 minutes
         self.connection.send(msg)
 
-
+# Start the virtual IP load balancer
 def launch():
-    """
-    Start the virtual IP load balancer
-    """
     def start_switch(event):
         log.info("Controlling %s" % (event.connection,))
         VirtualIPLoadBalancer(event.connection)
