@@ -1,3 +1,8 @@
+# This application is a Load Balancer that uses POX to divert traffic Round-Robin style
+
+# Author: Vivek Anandh
+# Date: Marh 23, 2025
+
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.addresses import EthAddr, IPAddr
