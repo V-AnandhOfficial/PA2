@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  hosta:
+    build: .
+    container_name: hosta
+    stdin_open: true
+    tty: true
+    cap_add:
+      - ALL
+    privileged: true
+    networks:
+      net14:
+        ipv4_address: 10.0.14.3
+
+  hostb:
+    build: .
+    container_name: hostb
+    stdin_open: true
+    tty: true
+    cap_add:
+      - ALL
+    privileged: true
+    networks:
+      net15:
+        ipv4_address: 10.0.15.3
+
+  r1:
+    build: .
+    container_name: r1
+    stdin_open: true
+    tty: true
+    cap_add:
+      - ALL
+    privileged: true
+    networks:
+      net14:
+        ipv4_address: 10.0.14.4
+      net10:
+        ipv4_address: 10.0.10.3
+      net13:
+        ipv4_address: 10.0.13.4
+
+  r2:
+    build: .
+    container_name: r2
+    stdin_open: true
+    tty: true
+    cap_add:
+      - ALL
+    privileged: true
+    networks:
+      net10:
+        ipv4_address: 10.0.10.4
+      net11:
+        ipv4_address: 10.0.11.3
+
+  r3:
+    build: .
+    container_name: r3
+    stdin_open: true
+    tty: true
+    cap_add:
+      - ALL
+    privileged: true
+    networks:
+      net11:
+        ipv4_address: 10.0.11.4
+      net12:
+        ipv4_address: 10.0.12.3
+
+  r4:
+    build: .
+    container_name: r4
+    stdin_open: true
+    tty: true
+    cap_add:
+      - ALL
+    privileged: true
+    networks:
+      net13:
+        ipv4_address: 10.0.13.3
+      net12:
+        ipv4_address: 10.0.12.4
+      net15:
+        ipv4_address: 10.0.15.4
+
+networks:
+  net14:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.14.0/24
+  net10:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.10.0/24
+  net13:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.13.0/24
+  net11:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.11.0/24
+  net12:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.12.0/24
+  net15:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.15.0/24
