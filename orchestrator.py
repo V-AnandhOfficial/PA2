@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import subprocess
 import sys
@@ -32,9 +31,6 @@ HOST_ROUTES = {
 
 
 def run(cmd):
-    """
-    Execute a shell command, exit on failure.
-    """
     print(f"Running: {cmd}")
     result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
@@ -44,16 +40,10 @@ def run(cmd):
 
 
 def construct_topology():
-    """
-    Use Docker Compose to bring up the full topology.
-    """
     run('docker compose up -d')
 
 
 def install_ospf():
-    """
-    Install FRR and configure OSPF on each router.
-    """
     install_cmd = (
         "apt update && apt -y install curl gnupg lsb-release && "
         "curl -s https://deb.frrouting.org/frr/keys.gpg | tee /usr/share/keyrings/frrouting.gpg > /dev/null && "
@@ -91,9 +81,6 @@ def install_ospf():
 
 
 def install_host_routes():
-    """
-    Configure the static default routes on each host.
-    """
     for host, rinfo in HOST_ROUTES.items():
         # Remove unwanted Docker-injected route (ignore failures)
         run(f"docker exec -i {host} ip route del default via {rinfo['del_gw']} dev eth0 || true")
@@ -102,11 +89,6 @@ def install_host_routes():
 
 
 def move_traffic(direction):
-    """
-    Change OSPF link weights to switch traffic.
-
-    direction: 'north2south' or 'south2north'
-    """
     if direction == 'north2south':
         cost = 100
     else:
