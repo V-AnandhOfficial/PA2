@@ -4,14 +4,15 @@ import subprocess
 import sys
 import time
 
-# Mapping of routers to their OSPF configuration\NROUTER_CONFIGS = {
+# OSPF router configurations
+ROUTER_CONFIGS = {
     'r1': {'router_id': '1.1.1.1', 'networks': ['10.0.14.0/24', '10.0.10.0/24', '10.0.13.0/24']},
     'r2': {'router_id': '2.2.2.2', 'networks': ['10.0.10.0/24', '10.0.11.0/24']},
     'r3': {'router_id': '3.3.3.3', 'networks': ['10.0.11.0/24', '10.0.12.0/24', '10.0.15.0/24']},
     'r4': {'router_id': '4.4.4.4', 'networks': ['10.0.13.0/24', '10.0.12.0/24']}
 }
 
-# Hosts and their intended default gateways
+# Host static route configurations
 HOST_ROUTES = {
     'hosta': {'del_gw': '10.0.14.1', 'add_gw': '10.0.14.4'},
     'hostb': {'del_gw': '10.0.15.1', 'add_gw': '10.0.15.4'}
@@ -36,38 +37,43 @@ def construct_topology():
 
 def install_ospf():
     """
-    Sequentially install FRR and configure OSPF on each router to avoid quoting issues.
+    Install FRR and configure OSPF on each router.
     """
     for router, cfg in ROUTER_CONFIGS.items():
         print(f"\n--- Configuring FRR on {router} ---")
-        # Update and install dependencies
+        # Install FRR prerequisites
         run(f"docker exec -i {router} apt update")
         run(f"docker exec -i {router} apt -y install curl gnupg lsb-release")
         run(f"docker exec -i {router} curl -s https://deb.frrouting.org/frr/keys.gpg | tee /usr/share/keyrings/frrouting.gpg > /dev/null")
-        run(f"docker exec -i {router} apt -y install lsb-release")
-        run(f"docker exec -i {router} bash -c \"echo 'deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable' > /etc/apt/sources.list.d/frr.list\"")
+        run(f"docker exec -i {router} bash -c 'echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" > /etc/apt/sources.list.d/frr.list'")
         run(f"docker exec -i {router} apt update")
         run(f"docker exec -i {router} apt -y install frr frr-pythontools")
-        # Enable ospfd and restart
+        # Enable ospfd
         run(f"docker exec -i {router} sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons")
         run(f"docker exec -i {router} service frr restart")
 
-        # Configure OSPF via vtysh
+        # Prepare OSPF vtysh config
         vtysh_cmds = [
             'configure terminal',
             'router ospf',
             f"ospf router-id {cfg['router_id']}"
-        ] + [f"network {net} area 0.0.0.0" for net in cfg['networks']] + ['end']
+        ]
+        for net in cfg['networks']:
+            vtysh_cmds.append(f"network {net} area 0.0.0.0")
+        vtysh_cmds.append('end')
 
         proc = subprocess.Popen(
             ['docker', 'exec', '-i', router, 'vtysh'],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
         stdout, stderr = proc.communicate('\n'.join(vtysh_cmds) + '\n')
         if proc.returncode != 0:
             print(f"Error configuring OSPF on {router}:\nSTDOUT: {stdout}\nSTDERR: {stderr}", file=sys.stderr)
             sys.exit(proc.returncode)
-        print(f"Completed OSPF config on {router}\n")
+        print(f"Completed OSPF config on {router}")
 
 
 def install_host_routes():
@@ -94,8 +100,8 @@ def main():
     subparsers.add_parser('init_ospf', help='Install and configure FRR/OSPF on routers')
     subparsers.add_parser('host_routes', help='Set correct default routes on hosts')
 
-    move = subparsers.add_parser('move', help='Switch traffic path via OSPF cost manipulation')
-    move.add_argument('direction', choices=['north2south', 'south2north'], help='north2south or south2north')
+    move_parser = subparsers.add_parser('move', help='Switch traffic path via OSPF cost manipulation')
+    move_parser.add_argument('direction', choices=['north2south', 'south2north'], help='Direction to move traffic')
 
     args = parser.parse_args()
     if args.command == 'up':
