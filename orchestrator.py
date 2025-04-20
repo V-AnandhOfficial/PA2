@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import argparse
 import subprocess
 import sys
@@ -60,8 +59,7 @@ def install_ospf():
         'apt update && apt -y install curl gnupg lsb-release && '
         'curl -s https://deb.frrouting.org/frr/keys.gpg | tee /usr/share/keyrings/frrouting.gpg >/dev/null && '
         'FRRVER="frr-stable" && '
-        'echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) $FRRVER" '
-        '| tee -a /etc/apt/sources.list.d/frr.list && '
+        'echo \'deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) $FRRVER\' | tee -a /etc/apt/sources.list.d/frr.list && '
         'apt update && apt -y install frr frr-pythontools && '
         'sed -i \'s/ospfd=no/ospfd=yes/\' /etc/frr/daemons && '
         'service frr restart'
@@ -70,7 +68,7 @@ def install_ospf():
     for router, cfg in ROUTER_CONFIGS.items():
         print(f"Configuring FRR on {router}...")
         # Execute install_cmd inside the router container
-        run(f'docker exec -i {router} bash -c "{install_cmd}"')
+        run(f"docker exec -i {router} bash -c \"{install_cmd}\"")
 
         # Build vtysh configuration script
         vtysh_cfg = []
