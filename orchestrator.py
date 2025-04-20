@@ -45,7 +45,7 @@ def install_ospf():
         run(f"docker exec -i {router} apt update")
         run(f"docker exec -i {router} apt -y install curl gnupg lsb-release")
         run(f"docker exec -i {router} curl -s https://deb.frrouting.org/frr/keys.gpg | tee /usr/share/keyrings/frrouting.gpg > /dev/null")
-        run(f"docker exec -i {router} bash -c 'echo "deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable" > /etc/apt/sources.list.d/frr.list'")
+        run(f"docker exec -i {router} bash -c 'echo \"deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable\" > /etc/apt/sources.list.d/frr.list'")
         run(f"docker exec -i {router} apt update")
         run(f"docker exec -i {router} apt -y install frr frr-pythontools")
         # Enable ospfd
