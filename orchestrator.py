@@ -91,7 +91,7 @@ def run_command(cmd, container=None):
 def start_containers():
     """Start Docker containers according to the docker-compose file"""
     print("Starting containers...")
-    run_command(["docker-compose", "up", "-d"])
+    run_command(["docker", "up", "-d"])
     
     # Wait for containers to be ready
     time.sleep(5)
@@ -100,7 +100,7 @@ def start_containers():
 def stop_containers():
     """Stop all running containers"""
     print("Stopping containers...")
-    run_command(["docker-compose", "down"])
+    run_command(["docker", "down"])
     print("Containers stopped")
 
 def install_frr(container):
