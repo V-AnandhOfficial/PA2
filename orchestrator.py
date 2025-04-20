@@ -32,27 +32,37 @@ def run(cmd):
 
 
 def construct_topology():
+    """
+    Bring up the Docker topology using Docker Compose.
+    """
     run('docker compose up -d')
 
 
 def install_ospf():
     """
-    Install FRR and configure OSPF on each router.
+    Install FRR and configure OSPF on each router container.
     """
     for router, cfg in ROUTER_CONFIGS.items():
         print(f"\n--- Configuring FRR on {router} ---")
-        # Install FRR prerequisites
+        # Update package lists
         run(f"docker exec -i {router} apt update")
+        # Install prerequisites
         run(f"docker exec -i {router} apt -y install curl gnupg lsb-release")
-        run(f"docker exec -i {router} curl -s https://deb.frrouting.org/frr/keys.gpg | tee /usr/share/keyrings/frrouting.gpg > /dev/null")
-        run(f"docker exec -i {router} bash -c 'echo \"deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable\" > /etc/apt/sources.list.d/frr.list'")
+        # Import FRR GPG key
+        run(f"docker exec -i {router} curl -s https://deb.frrouting.org/frr/keys.gpg | tee /usr/share/keyrings/frrouting.gpg >/dev/null")
+        # Add FRR repository
+        run(
+            f"docker exec -i {router} bash -c \"echo 'deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr $(lsb_release -s -c) frr-stable' > /etc/apt/sources.list.d/frr.list\""
+        )
+        # Install FRR
         run(f"docker exec -i {router} apt update")
         run(f"docker exec -i {router} apt -y install frr frr-pythontools")
-        # Enable ospfd
+        # Enable OSPF daemon
         run(f"docker exec -i {router} sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons")
         run(f"docker exec -i {router} service frr restart")
 
-        # Prepare OSPF vtysh config
+        # Configure OSPF via vtysh
+        print(f"Configuring OSPF on {router}...")
         vtysh_cmds = [
             'configure terminal',
             'router ospf',
@@ -64,10 +74,7 @@ def install_ospf():
 
         proc = subprocess.Popen(
             ['docker', 'exec', '-i', router, 'vtysh'],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         stdout, stderr = proc.communicate('\n'.join(vtysh_cmds) + '\n')
         if proc.returncode != 0:
@@ -77,6 +84,9 @@ def install_ospf():
 
 
 def install_host_routes():
+    """
+    Remove Docker-injected default routes and add correct gateways on hosts.
+    """
     for host, rinfo in HOST_ROUTES.items():
         print(f"Configuring routes on {host}...")
         run(f"docker exec -i {host} ip route del default via {rinfo['del_gw']} dev eth0 || true")
@@ -84,8 +94,12 @@ def install_host_routes():
 
 
 def move_traffic(direction):
+    """
+    Adjust OSPF link costs to move traffic between north and south paths.
+    direction: 'north2south' or 'south2north'
+    """
     cost = 100 if direction == 'north2south' else 1
-    print(f"Setting OSPF cost to {cost} for north path interfaces...")
+    print(f"Setting OSPF cost to {cost} on north path interfaces...")
     run(f"docker exec -i r1 vtysh -c 'configure terminal' -c 'interface eth1' -c 'ip ospf cost {cost}' -c 'end'")
     run(f"docker exec -i r3 vtysh -c 'configure terminal' -c 'interface eth1' -c 'ip ospf cost {cost}' -c 'end'")
     print("Waiting for OSPF to reconverge...")
